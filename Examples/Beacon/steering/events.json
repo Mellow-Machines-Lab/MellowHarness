@@ -1,0 +1,3 @@
+{
+  "deploy": {"line": "{who} deployed {service}.", "wake": 0}
+}

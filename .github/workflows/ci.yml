@@ -1,0 +1,29 @@
+# MellowHarness's own tests, on every push and pull request
+# (ARCHITECTURE.md, Development). It needs Xcode 26's Swift: macos-15's
+# default Xcode is too old. A failed run is tried once more, since a few
+# tests time real sockets and a shared runner is sometimes slow; each
+# failure's messages show as warnings on the run.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - run: swift --version
+      - name: swift test
+        run: |
+          for try in 1 2; do
+            if swift test 2>&1 | tee test.log; [ "${PIPESTATUS[0]}" -eq 0 ]; then exit 0; fi
+            sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "error:|✘|failed" | sort -u | head -20 |
+              while IFS= read -r line; do echo "::warning title=swift test, try $try::$line"; done
+          done
+          exit 1
