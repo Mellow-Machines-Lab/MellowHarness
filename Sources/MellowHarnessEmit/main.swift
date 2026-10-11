@@ -10,7 +10,7 @@ let usage = """
     Sends one event to the harness's socket at PATH (EventServer), e.g.
       mellowharness-emit --socket /tmp/beacon.sock ci build_failed branch=main run=812
     A whole number written plainly (812, -3; not 007) is one, true and false are yes and no, the rest strings.
-    --line gives the event a line of its own, for a kind registered with no transform.
+    --line gives the event a line of its own, for a kind with no input.
     """
 
 /// The flags taken out of the words, and the words left.
@@ -37,6 +37,7 @@ event.line = line
 do {
     try EventServer.send(event, to: socket)
 } catch {
-    FileHandle.standardError.write(Data("mellowharness-emit: couldn't send to \(socket): \(error)\n".utf8))
+    let reason = String(cString: strerror(errno))
+    FileHandle.standardError.write(Data("mellowharness-emit: couldn't send to \(socket): \(error) (\(reason))\n".utf8))
     exit(1)
 }
