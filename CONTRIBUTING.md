@@ -7,6 +7,9 @@ swift build
 swift test
 ```
 
+On Command Line Tools without Xcode, `swift test` now and then fails with
+"plugin for module 'TestingMacros' not found". Run it again and it passes.
+
 - **Foundation only.** The package has no dependencies, and keeps it
   that way.
 - **Beacon's tests pin the worked example.** They check its log and

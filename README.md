@@ -199,6 +199,8 @@ You need macOS 13 or later and Swift 6.2 (Xcode 26, or its Command Line Tools:
    .build/debug/mellowharness-emit --socket /tmp/bcn.sock ci build_passed branch=main
    ```
 
+   When you're done, `kill %1` stops Beacon.
+
 ## Usage
 
 ### Send an event

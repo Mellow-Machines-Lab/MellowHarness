@@ -1,6 +1,6 @@
 # How MellowHarness works
 
-Updated 2026-10-07. [README.md](README.md) is the short version. This is
+Updated 2026-10-11. [README.md](README.md) is the short version. This is
 the tour: how an event becomes a line, the lines a prompt, and the
 brain's answers something your app does. The code and its tests have
 every rule.
@@ -339,6 +339,7 @@ failing:
 import Foundation
 import MellowHarness
 
+setvbuf(stdout, nil, _IOLBF, 0)  // print each line at once, even to a file
 let queue = DispatchQueue(label: "light")  // the harness's one queue
 // Jev with a key, or a stand-in that always worries.
 let brain: any Brain = ProcessInfo.processInfo.environment["JEV_KEY"].map { JevBrain(key: $0) }
@@ -382,11 +383,14 @@ try server.start()
 dispatchMain()
 ```
 
-Run it, then send it two failures from a shell:
+It's top-level code, so it goes in the `main.swift` of an executable
+target that depends on the `MellowHarness` product. Run it, then send it
+two failures from a shell, with `mellowharness-emit` from this package's
+`.build/debug/`:
 
 ```sh
-mellowharness-emit --socket /tmp/light.sock ci build_failed branch=main run=812
-mellowharness-emit --socket /tmp/light.sock ci build_failed branch=main run=813
+.build/debug/mellowharness-emit --socket /tmp/light.sock ci build_failed branch=main run=812
+.build/debug/mellowharness-emit --socket /tmp/light.sock ci build_failed branch=main run=813
 ```
 
 Here's the second prompt it prints, from a real run. This is everything
@@ -461,11 +465,9 @@ are strings.
 swift test --scratch-path .build/tests
 ```
 
-The tests use Swift Testing:
-
-- `MellowHarnessTests` checks the harness with toy outputs.
-- `JevBrainTests` checks Jev's request and answer.
-- `BeaconTests` checks the worked example.
+The tests use Swift Testing, and the suites are in
+`Tests/MellowHarnessTests/`. `BeaconTests` pins the worked example word
+for word.
 
 The package depends on nothing but Foundation, and on nothing outside
 this folder. The README's GIF is a real run of `beacon listen`.

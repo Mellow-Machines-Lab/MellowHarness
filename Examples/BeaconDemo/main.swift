@@ -38,8 +38,13 @@ if args.first == "listen" {
     setvbuf(stdout, nil, _IOLBF, 0)
     let running = try Beacon.listen(socket: path, steering: steering) { print($0) }
     print("beacon: listening on \(path)")
-    signal(SIGINT) { _ in exit(0) }
-    withExtendedLifetime(running) { dispatchMain() }
+    // Ctrl-C ends it from the main queue, not a signal handler. The handler is @Sendable so it isn't
+    // taken for main-actor code: once dispatchMain() parks the main thread, the queue runs elsewhere.
+    signal(SIGINT, SIG_IGN)
+    let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    interrupt.setEventHandler { @Sendable in exit(0) }
+    interrupt.resume()
+    withExtendedLifetime((running, interrupt)) { dispatchMain() }
 }
 
 let run = try await Beacon.demo(steering: steering)
