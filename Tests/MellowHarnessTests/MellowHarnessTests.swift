@@ -394,7 +394,7 @@ import Testing
         let pass = try #require(rig.sync { rig.h.log.events.last { $0.kind == Event.pass } })
         #expect(pass.about == go.seq)
         #expect(pass["answers"]?.object?["a1"]?.object?["p"]?.object?["x"] == .double(0.812), "three places")
-        #expect(passes.first?.actions.map(\.name) == ["a"])
+        #expect(passes.first?.outputs.map(\.name) == ["a"])
         #expect(passes.first?.prompt?.hasSuffix("NOW (14:09, Wednesday)\nGo.\nBeacon did nothing on its own.") == true)
 
         let failing = Rig(brain: ScriptedBrain { _, _ in throw BrainError("nope") })
@@ -569,7 +569,7 @@ import Testing
                                   : [Option("worried", "Stay worried."), Option("calm", "A build passed.")]
                           })
         func view() -> LogView { log.view(now: Self.t0) }
-        func run(_ pick: String) -> ActionResult? {
+        func run(_ pick: String) -> OutputResult? {
             let result = tone.run(["tone": Answer(choice: pick)], now: nil, log: view())
             if let result { log.append(Event.did(result.message, for: nil, action: "tone", by: "brain", facts: result.facts), now: Self.t0) }
             return result
@@ -729,12 +729,12 @@ final class Rig: @unchecked Sendable {
 
 /// An output with fixed keys that records the answers it gets and returns
 /// `result`.
-final class ToyOutput: Action, @unchecked Sendable {
+final class ToyOutput: Output, @unchecked Sendable {
     let name: String
     let keys: [String]
     var got: [Answers] = []
-    var result: ActionResult?
-    init(_ name: String, keys: [String], result: ActionResult?) {
+    var result: OutputResult?
+    init(_ name: String, keys: [String], result: OutputResult?) {
         self.name = name
         self.keys = keys
         self.result = result
@@ -742,7 +742,7 @@ final class ToyOutput: Action, @unchecked Sendable {
     func questions(now: Event?, log: LogView) -> [Question] {
         keys.map { Question(key: $0, text: "?", about: "the NOW section", judgeBy: "x", options: [Option("x", "X"), Option("y", "Y")]) }
     }
-    func run(_ answers: Answers, now: Event?, log: LogView) -> ActionResult? {
+    func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult? {
         got.append(answers)
         return result
     }

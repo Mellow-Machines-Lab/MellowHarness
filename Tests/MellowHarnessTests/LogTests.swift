@@ -44,7 +44,7 @@ import Testing
 
     /// Events aging out on every append and every tick, thousands of
     /// times over, with `did`s, ends and passes for events that go before
-    /// or after them: the events in memory, each kind's, each action's
+    /// or after them: the events in memory, each kind's, each output's or rule's
     /// `did`s, what's open, answered and ended, and a stretch of time, as
     /// filtering everything would give, at every step.
     @Test func testLettingGoInBatchesAnswersAsFilteringEverything() {

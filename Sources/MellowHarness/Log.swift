@@ -358,7 +358,7 @@ public struct LogView {
     }
 
     /// The newest `did` of the output or rule `action` in view that
-    /// matches: `last(Event.did)` for one action, without looking through
+    /// matches: `last(Event.did)` for one output or rule, without looking through
     /// the others'.
     public func lastDid(_ action: String, where match: ((Event) -> Bool)? = nil) -> Event? {
         let all = log.didsBy[action] ?? []

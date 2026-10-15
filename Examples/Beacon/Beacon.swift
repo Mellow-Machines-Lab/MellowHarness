@@ -1,11 +1,11 @@
 import MellowHarness
 import Foundation
 
-/// Beacon: a CI light with one button and three one-shots
+/// Beacon: a CI light with one button and three short animations
 /// it plays, `flash`, `wobble` and `cheer`. MellowHarness's worked example, as
 /// small as it gets: builds failing and passing and the button, each a
 /// line; a rule that flashes; a tone the brain can change, whose Markdown
-/// file is a section; and one-shots the brain can play, in progress until
+/// file is a section; and animations the brain can play, in progress until
 /// the light says they're done.
 public final class Beacon {
     public let harness: Harness
@@ -148,7 +148,7 @@ public final class Light: @unchecked Sendable {
 
 /// What Beacon can play when the brain wakes: nothing, a wobble or a
 /// cheer, in progress until the light says it's done.
-final class Play: Action {
+final class Play: Output {
     let name = "play"
     let light: Light
 
@@ -162,7 +162,7 @@ final class Play: Action {
                             Option("cheer", "A cheer: the build came good again.", notFor: "Anything but a build passing.")])]
     }
 
-    func run(_ answers: Answers, now: Event?, log: LogView) -> ActionResult? {
+    func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult? {
         guard let pick = answers["play"]?.choice, pick != "none" else { return nil }
         let p = Pending()
         light.do(pick, ended: p)

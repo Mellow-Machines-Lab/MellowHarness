@@ -24,7 +24,7 @@ public final class Harness: @unchecked Sendable {
         public var historyMs: Int64 = 10 * 60_000
         public var historyLimit = 40
         /// An output's `run` taking longer than this is logged.
-        public var actionSlowMs = 300
+        public var outputSlowMs = 300
         /// An open `did` is ended after this, unless its output says.
         public var openForMs: Int64 = 60_000
         /// How often `start()` ticks.
@@ -62,15 +62,15 @@ public final class Harness: @unchecked Sendable {
     }
 
     /// What one output did in a pass, and its `did`'s `seq`.
-    public struct ActionRecord: Equatable, Sendable {
+    public struct OutputRecord: Equatable, Sendable {
         public var name: String
-        public var result: ActionResult
+        public var result: OutputResult
         public var latencyMs: Int
         public var seq: Int
 
         /// Which outputs returned a result: `tone, play (failed)`, or
         /// `nothing`.
-        public static func names(_ records: [ActionRecord]) -> String {
+        public static func names(_ records: [OutputRecord]) -> String {
             records.isEmpty ? "nothing" : records.map { $0.name + ($0.result.ok ? "" : " (failed)") }.joined(separator: ", ")
         }
     }
@@ -102,7 +102,7 @@ public final class Harness: @unchecked Sendable {
         public var questions: [Question]
         /// The log's last `seq` when its prompt was built.
         public var seen: Int
-        public var actions: [ActionRecord]
+        public var outputs: [OutputRecord]
         /// The brain's error, when it failed.
         public var error: BrainError?
         /// Whether it asked the brain in use now, not one `use` has
@@ -111,7 +111,7 @@ public final class Harness: @unchecked Sendable {
 
         public init(event: Event?, line: String?, seq: Int, answers: Answers, dropped: String?, held: String?,
                     latencyMs: Int, brain: String?, by: String?, prompt: String?, questions: [Question], seen: Int,
-                    actions: [ActionRecord], error: BrainError?, current: Bool) {
+                    outputs: [OutputRecord], error: BrainError?, current: Bool) {
             self.event = event
             self.line = line
             self.seq = seq
@@ -124,7 +124,7 @@ public final class Harness: @unchecked Sendable {
             self.prompt = prompt
             self.questions = questions
             self.seen = seen
-            self.actions = actions
+            self.outputs = outputs
             self.error = error
             self.current = current
         }
@@ -158,12 +158,12 @@ public final class Harness: @unchecked Sendable {
     /// Each kind's hold, apart from its input: a hold alone registers no line.
     var holds: [String: (Event, LogView) -> String?] = [:]
     var rules: [(kind: String, run: (Event) -> Void)] = []
-    struct Output {
-        var action: any Action
+    struct Registered {
+        var output: any Output
         var openForMs: Int64
         var keepOpen: ((Event, LogView) -> Bool)?
     }
-    var outputs: [Output] = []
+    var registered: [Registered] = []
     var sections: [(LogView) -> String?] = []
     var closingLine: ((Event, Int64, LogView) -> String?)?
     var reachBackTo: ((Event, Int64, LogView) -> Int64?)?
@@ -276,12 +276,12 @@ public final class Harness: @unchecked Sendable {
     /// after `openFor` if nothing ends it first, unless `keepOpen`, asked
     /// from its `did` and the log once `openFor` has passed, says the app
     /// still holds it on purpose.
-    public func output(_ action: any Action, openFor: Int64? = nil, keepOpen: ((Event, LogView) -> Bool)? = nil) {
-        outputs.append(Output(action: action, openForMs: openFor ?? options.openForMs, keepOpen: keepOpen))
+    public func output(_ output: any Output, openFor: Int64? = nil, keepOpen: ((Event, LogView) -> Bool)? = nil) {
+        registered.append(Registered(output: output, openForMs: openFor ?? options.openForMs, keepOpen: keepOpen))
     }
 
     /// The outputs, in the order they run.
-    public var actions: [any Action] { outputs.map(\.action) }
+    public var outputs: [any Output] { registered.map(\.output) }
 
     /// A section of the prompt, built for every call; nil or empty is left out.
     public func section(_ build: @escaping (LogView) -> String?) { sections.append(build) }
@@ -543,7 +543,7 @@ public final class Harness: @unchecked Sendable {
     /// The prompt and every output's questions for a call about `e`.
     func prepare(_ e: Event, _ brain: any Brain) -> Job {
         let view = log.view(now: clock.now())
-        let asked = outputs.map { $0.action.questions(now: e, log: view) }
+        let asked = registered.map { $0.output.questions(now: e, log: view) }
         return Job(brain: brain, generation: generation, prompt: prompt(for: e), questions: asked.flatMap { $0 },
                    keys: asked.map { $0.map(\.key) }, seen: log.lastSeq)
     }
@@ -630,7 +630,7 @@ public final class Harness: @unchecked Sendable {
         depth -= 1
         let pass = Pass(event: e, line: lines[e.seq]?.text, seq: passEvent.seq, answers: answers, dropped: dropped, held: held, latencyMs: latencyMs, brain: brainID,
                         by: nil, prompt: job?.prompt, questions: job?.questions ?? [], seen: job?.seen ?? log.lastSeq,
-                        actions: ran, error: job == nil ? nil : error, current: job?.generation == generation)
+                        outputs: ran, error: job == nil ? nil : error, current: job?.generation == generation)
         onPass?(pass)
         return pass
     }
@@ -647,37 +647,37 @@ public final class Harness: @unchecked Sendable {
     /// reports. `keys` are each output's question keys as they were asked;
     /// nil asks them again. The ones in `skipping` sit out.
     func runOutputs(_ answers: Answers, keys: [[String]]?, now: Event?, by: String,
-                    skipping: Set<String> = []) -> [ActionRecord] {
-        var ran: [ActionRecord] = []
-        for (i, output) in outputs.enumerated() {
-            let action = output.action
-            if skipping.contains(action.name) {
-                note("harness: \(action.name) sat out the pass: it changed while the pass ran")
+                    skipping: Set<String> = []) -> [OutputRecord] {
+        var ran: [OutputRecord] = []
+        for (i, slot) in registered.enumerated() {
+            let output = slot.output
+            if skipping.contains(output.name) {
+                note("harness: \(output.name) sat out the pass: it changed while the pass ran")
                 continue
             }
             let view = log.view(now: clock.now())
-            let own = keys?[i] ?? action.questions(now: now, log: view).map(\.key)
+            let own = keys?[i] ?? output.questions(now: now, log: view).map(\.key)
             let mine = Dictionary(own.compactMap { k in answers[k].map { (k, $0) } }, uniquingKeysWith: { first, _ in first })
             let started = ContinuousClock.now
-            let result = action.run(mine, now: now, log: view)
+            let result = output.run(mine, now: now, log: view)
             let ms = (ContinuousClock.now - started).ms
-            if ms > options.actionSlowMs { note("harness: \(action.name) took \(ms) ms; slow work should be handed off") }
+            if ms > options.outputSlowMs { note("harness: \(output.name) took \(ms) ms; slow work should be handed off") }
             guard let result else { continue }
-            ran.append(record(action.name, result, for: now?.seq, by: by, latencyMs: ms))
+            ran.append(record(output.name, result, for: now?.seq, by: by, latencyMs: ms))
         }
         return ran
     }
 
     /// Logs a result as a `did`: open while what it started plays, its
     /// handle bound to end it.
-    func record(_ name: String, _ result: ActionResult, for about: Int?, by: String, latencyMs: Int) -> ActionRecord {
+    func record(_ name: String, _ result: OutputResult, for about: Int?, by: String, latencyMs: Int) -> OutputRecord {
         let started = result.ok && result.pending != nil
         let facts = result.facts.merging(["latency_ms": .int(Int64(latencyMs))]) { _, mine in mine }
         let d = emit(Event.did(result.message, for: about, action: name, by: by, ok: result.ok, open: started, facts: facts))
         if started, let pending = result.pending {
             pending.bind { [weak self] end in self?.settle(d.seq, end) }
         }
-        return ActionRecord(name: name, result: result, latencyMs: latencyMs, seq: d.seq)
+        return OutputRecord(name: name, result: result, latencyMs: latencyMs, seq: d.seq)
     }
 
     /// Ends an open `did`; one already ended is left alone.
@@ -714,7 +714,7 @@ public final class Harness: @unchecked Sendable {
         depth += 1
         for seq in log.openDids.sorted() {
             guard let d = log.event(seq) else { continue }
-            let output = outputs.first { $0.action.name == d.action }
+            let output = registered.first { $0.output.name == d.action }
             guard now - d.at >= output?.openForMs ?? options.openForMs,
                   output?.keepOpen?(d, log.view(now: now)) != true else { continue }
             note("harness: \(d.action ?? "?") was still in progress after \(now - d.at) ms; ended it")
@@ -737,10 +737,10 @@ public final class Harness: @unchecked Sendable {
     /// no event. A choice that isn't one of its question's options is left
     /// out. Question keys asked twice drop it, and no output runs.
     @discardableResult
-    public func force(_ choices: [String: String], by: String) -> [ActionRecord] {
+    public func force(_ choices: [String: String], by: String) -> [OutputRecord] {
         dispatchPrecondition(condition: .onQueue(queue))
         let view = log.view(now: clock.now())
-        let all = outputs.flatMap { $0.action.questions(now: nil, log: view) }
+        let all = registered.flatMap { $0.output.questions(now: nil, log: view) }
         let dropped = Harness.repeated(all)
         let asked = dropped != nil ? [] : all.filter { q in q.options.contains { $0.name == choices[q.key] } }
         let answers = Dictionary(uniqueKeysWithValues: asked.compactMap { q in
@@ -756,7 +756,7 @@ public final class Harness: @unchecked Sendable {
         depth -= 1
         for a in ran where a.result.ok { changedOutside(a.name) }
         onPass?(Pass(event: nil, line: nil, seq: passEvent.seq, answers: answers, dropped: dropped, held: nil, latencyMs: 0, brain: nil, by: by, prompt: nil,
-                     questions: asked, seen: log.lastSeq, actions: ran, error: nil, current: true))
+                     questions: asked, seen: log.lastSeq, outputs: ran, error: nil, current: true))
         wake()
         return ran
     }
@@ -764,12 +764,12 @@ public final class Harness: @unchecked Sendable {
     /// One output acting outside any pass, such as a value set from a
     /// dashboard: its result is logged for no event.
     @discardableResult
-    public func force(_ action: any Action, by: String, _ body: () -> ActionResult?) -> ActionResult? {
+    public func force(_ output: any Output, by: String, _ body: () -> OutputResult?) -> OutputResult? {
         dispatchPrecondition(condition: .onQueue(queue))
         let started = ContinuousClock.now
         guard let result = body() else { return nil }
-        _ = record(action.name, result, for: nil, by: by, latencyMs: (ContinuousClock.now - started).ms)
-        if result.ok { changedOutside(action.name) }
+        _ = record(output.name, result, for: nil, by: by, latencyMs: (ContinuousClock.now - started).ms)
+        if result.ok { changedOutside(output.name) }
         return result
     }
 

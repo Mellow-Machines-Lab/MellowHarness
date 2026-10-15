@@ -5,7 +5,7 @@ import Foundation
 /// the `to` of its latest `did` in the log, or `start`. Its options come
 /// from your function, for every call; staying put is the brain picking
 /// the value it has, which changes nothing and logs nothing.
-public final class Choice: Action {
+public final class Choice: Output {
     public let name: String
     public let start: String
     let question: String
@@ -46,7 +46,7 @@ public final class Choice: Action {
     }
 
     /// A pick that isn't one of the options it was offered changes nothing.
-    public func run(_ answers: Answers, now: Event?, log: LogView) -> ActionResult? {
+    public func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult? {
         guard let pick = answers[name]?.choice, options(value(log), now, log).contains(where: { $0.name == pick }) else {
             return nil
         }
@@ -54,7 +54,7 @@ public final class Choice: Action {
     }
 
     /// Changes it to `to`, whatever the options: nil when it already is.
-    public func set(_ to: String, log: LogView) -> ActionResult? {
+    public func set(_ to: String, log: LogView) -> OutputResult? {
         let from = value(log)
         guard to != from else { return nil }
         return .done(said(from, to), facts: ["from": .string(from), "to": .string(to)])

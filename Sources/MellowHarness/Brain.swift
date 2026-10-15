@@ -1,6 +1,6 @@
 import Foundation
 
-/// The brain: answers multiple-choice questions about a plain-text state.
+/// The brain: answers multiple-choice questions about a prompt in plain text.
 /// `JevBrain`, `ScriptedBrain` in tests, or your own: a local model,
 /// another provider.
 ///
