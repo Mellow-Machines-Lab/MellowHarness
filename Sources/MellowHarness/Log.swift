@@ -132,7 +132,7 @@ public final class Log: @unchecked Sendable {
     /// and their entries in the indexes go once they're an eighth of what's
     /// kept, so each event's share of the work stays small however long
     /// the app runs.
-    public func trim(now: Int64) {
+    func trim(now: Int64) {
         var cut = start
         while cut < kept.count, now - kept[cut].at > options.keepMs { cut += 1 }
         guard cut > start else { return }

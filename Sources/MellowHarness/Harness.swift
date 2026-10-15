@@ -415,7 +415,7 @@ public final class Harness: @unchecked Sendable {
     }
 
     /// The harness's own words on how to read HISTORY and NOW.
-    public static func reading(_ name: String) -> String {
+    static func reading(_ name: String) -> String {
         """
         How to read HISTORY and NOW:
         - HISTORY is oldest first. Each line says how long ago it happened.
@@ -426,7 +426,7 @@ public final class Harness: @unchecked Sendable {
         """
     }
 
-    public static let historyHeading = "HISTORY (oldest first; indented lines add to the line above)"
+    static let historyHeading = "HISTORY (oldest first; indented lines add to the line above)"
 
     /// HISTORY for a call about `e` at `now`.
     func history(before e: Event, now: Int64, view: LogView) -> String {
@@ -465,7 +465,7 @@ public final class Harness: @unchecked Sendable {
     }
 
     /// `just now`, `9 min ago`, `2 h ago`.
-    public static func ago(_ ms: Int64) -> String {
+    static func ago(_ ms: Int64) -> String {
         ms < 60_000 ? "just now" : ms < 60 * 60_000 ? "\(ms / 60_000) min ago" : "\(ms / 3_600_000) h ago"
     }
 

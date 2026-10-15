@@ -24,8 +24,8 @@ public protocol Brain: Sendable {
 
 public struct BrainError: Error, Equatable, CustomStringConvertible {
     public var description: String
-    /// What came back, when it couldn't be used, for your own debugging.
-    public var raw: String?
+    /// What came back, when it couldn't be used: the harness notes its size.
+    var raw: String?
     /// The HTTP status, when the brain's server answered with an error.
     public var status: Int?
 

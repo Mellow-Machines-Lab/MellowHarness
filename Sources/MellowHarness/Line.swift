@@ -19,7 +19,7 @@ public struct Line: Equatable, Sendable, ExpressibleByStringInterpolation {
 
     /// The line a registered kind with no transform shows when its event
     /// has no `line`: `hold: secs 2`, its data's plain values, keys sorted.
-    public static func fallback(_ e: Event) -> Line {
+    static func fallback(_ e: Event) -> Line {
         let facts = e.data.keys.sorted().compactMap { key -> String? in
             switch e.data[key] {
             case .string(let s)?: "\(key) \(s)"

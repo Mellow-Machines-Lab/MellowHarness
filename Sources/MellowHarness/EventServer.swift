@@ -143,7 +143,7 @@ public final class EventServer: @unchecked Sendable {
     }
 
     /// The line for `e`, as `send` writes it.
-    public static func encode(_ e: Event) -> String {
+    static func encode(_ e: Event) -> String {
         var o: [String: Any] = ["source": e.source, "kind": e.kind, "data": e.data.mapValues(\.foundation)]
         if let line = e.line { o["line"] = line }
         if e.at != 0 { o["at"] = NSNumber(value: e.at) }
