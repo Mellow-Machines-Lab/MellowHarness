@@ -527,7 +527,7 @@ are strings.
 ## Development
 
 ```sh
-swift test --scratch-path .build/tests
+swift test --no-parallel --scratch-path .build/tests
 ```
 
 The tests use Swift Testing, and the suites are in
