@@ -47,6 +47,20 @@ public final class Harness: @unchecked Sendable {
         case custom(String)
     }
 
+    /// One character the harness answers for, when it answers for
+    /// several from one log: each answers an event in a pass of its own,
+    /// in turn, asked only its own outputs' questions and those of no
+    /// voice. `id` goes in the log; `name` in the harness's own words.
+    public struct Voice: Sendable, Equatable {
+        public let id: String
+        public let name: String
+
+        public init(id: String, name: String) {
+            self.id = id
+            self.name = name
+        }
+    }
+
     /// The clock: `now` for events' `at`, relative times and
     /// `openFor`; `wall` for NOW's heading. Both unix milliseconds.
     public struct Clock: Sendable {
@@ -108,10 +122,12 @@ public final class Harness: @unchecked Sendable {
         /// Whether it asked the brain in use now, not one `use` has
         /// replaced since.
         public var current: Bool
+        /// The voice it answered for; nil with no voices.
+        public var voice: String?
 
         public init(event: Event?, line: String?, seq: Int, answers: Answers, dropped: String?, held: String?,
                     latencyMs: Int, brain: String?, by: String?, prompt: String?, questions: [Question], seen: Int,
-                    outputs: [OutputRecord], error: BrainError?, current: Bool) {
+                    outputs: [OutputRecord], error: BrainError?, current: Bool, voice: String? = nil) {
             self.event = event
             self.line = line
             self.seq = seq
@@ -127,6 +143,7 @@ public final class Harness: @unchecked Sendable {
             self.outputs = outputs
             self.error = error
             self.current = current
+            self.voice = voice
         }
     }
 
@@ -156,16 +173,20 @@ public final class Harness: @unchecked Sendable {
     }
     var inputs: [String: Input] = [:]
     /// Each kind's hold, apart from its input: a hold alone registers no line.
-    var holds: [String: (Event, LogView) -> String?] = [:]
+    var holds: [String: (Event, LogView, Voice?) -> String?] = [:]
     var rules: [(kind: String, run: (Event) -> Void)] = []
     struct Registered {
         var output: any Output
+        var voice: String? { output.voice }
         var openForMs: Int64
         var keepOpen: ((Event, LogView) -> Bool)?
     }
     var registered: [Registered] = []
-    var sections: [(LogView) -> String?] = []
-    var closingLine: ((Event, Int64, LogView) -> String?)?
+    /// The voices, in the order they answer by default; none for one.
+    public private(set) var voices: [Voice] = []
+    var speakersOf: ((Event, LogView) -> [String])?
+    var sections: [(LogView, Voice?) -> String?] = []
+    var closingLine: ((Event, Int64, LogView, Voice?) -> String?)?
     var reachBackTo: ((Event, Int64, LogView) -> Int64?)?
     var checks: [(Int64, LogView) -> Event?] = []
 
@@ -182,7 +203,7 @@ public final class Harness: @unchecked Sendable {
     var linesFrom = 0
 
     // The loop's own.
-    var running: (id: Int, seq: Int)?
+    var running: (id: Int, seq: Int, voice: String?)?
     var nextPass = 0
     var deadline: DispatchSourceTimer?
     var timer: DispatchSourceTimer?
@@ -191,7 +212,12 @@ public final class Harness: @unchecked Sendable {
     var depth = 0
     /// Outputs that acted outside a pass while one ran: they sit its
     /// answers out.
-    var changedDuringPass: Set<String> = []
+    var changedDuringPass: Set<OutputKey> = []
+    /// An output as registered: two voices' outputs may share a name.
+    struct OutputKey: Hashable {
+        var voice: String?
+        var name: String
+    }
     /// Stale events already noted, so each is noted once.
     var notedStale: Set<Int> = []
     /// The last `seq` read back at launch: nothing up to it is answered,
@@ -227,6 +253,12 @@ public final class Harness: @unchecked Sendable {
     /// brain comes: a reason to hold it back, or nil. It can read your
     /// live state as well as the log.
     public func hold(_ kind: String, _ check: @escaping (Event, LogView) -> String?) {
+        holds[kind] = { e, view, _ in check(e, view) }
+    }
+
+    /// A hold that knows which voice's turn it is (nil with no voices), so
+    /// it can hold one voice back and not another.
+    public func hold(_ kind: String, _ check: @escaping (Event, LogView, Voice?) -> String?) {
         holds[kind] = check
     }
 
@@ -276,6 +308,8 @@ public final class Harness: @unchecked Sendable {
     /// after `openFor` if nothing ends it first, unless `keepOpen`, asked
     /// from its `did` and the log once `openFor` has passed, says the app
     /// still holds it on purpose.
+    /// With a `voice`, only that voice's passes ask it and run it; with
+    /// none, every pass does.
     public func output(_ output: any Output, openFor: Int64? = nil, keepOpen: ((Event, LogView) -> Bool)? = nil) {
         registered.append(Registered(output: output, openForMs: openFor ?? options.openForMs, keepOpen: keepOpen))
     }
@@ -283,12 +317,50 @@ public final class Harness: @unchecked Sendable {
     /// The outputs, in the order they run.
     public var outputs: [any Output] { registered.map(\.output) }
 
+    /// The outputs a pass for `voice` asks, in the order they run: its
+    /// own and those of no voice.
+    public func outputs(for voice: String?) -> [any Output] { asked(by: voice).map(\.output) }
+
+    /// The registered outputs a pass for `voice` asks.
+    func asked(by voice: String?) -> [Registered] { registered.filter { $0.voice == nil || $0.voice == voice } }
+
+    /// A voice: with any, each event that wakes the brain is answered once
+    /// for each of its `speakers`, in turn.
+    public func voice(_ voice: Voice) {
+        precondition(!voices.contains { $0.id == voice.id }, "voice \(voice.id) registered twice")
+        voices.append(voice)
+    }
+
+    /// Which voices answer `e`, by `id`, in the order they answer: each
+    /// pass sees under NOW what the ones before it did. Every voice, in
+    /// the order registered, unless you say; none leaves `e` unanswered.
+    public func speakers(_ pick: @escaping (Event, LogView) -> [String]) { speakersOf = pick }
+
+    /// The voices that answer `e`, in order: one nil with no voices.
+    func speakers(_ e: Event, _ view: LogView) -> [Voice?] {
+        guard !voices.isEmpty else { return [nil] }
+        guard let speakersOf else { return voices }
+        let picked: [Voice] = speakersOf(e, view).compactMap { id in voices.first { $0.id == id } }
+        return picked
+    }
+
+    func voice(id: String?) -> Voice? { id.flatMap { id in voices.first { $0.id == id } } }
+
     /// A section of the prompt, built for every call; nil or empty is left out.
-    public func section(_ build: @escaping (LogView) -> String?) { sections.append(build) }
+    public func section(_ build: @escaping (LogView) -> String?) { sections.append { view, _ in build(view) } }
+
+    /// A section that knows which voice the prompt is for (nil with no
+    /// voices).
+    public func section(_ build: @escaping (LogView, Voice?) -> String?) { sections.append(build) }
 
     /// The line that closes HISTORY, if any, from NOW's event, the time
     /// and the log.
-    public func closing(_ build: @escaping (Event, Int64, LogView) -> String?) { closingLine = build }
+    public func closing(_ build: @escaping (Event, Int64, LogView) -> String?) {
+        closingLine = { e, now, view, _ in build(e, now, view) }
+    }
+
+    /// A closing line that knows which voice the prompt is for.
+    public func closing(_ build: @escaping (Event, Int64, LogView, Voice?) -> String?) { closingLine = build }
 
     /// How far back HISTORY reaches at least, if further than `historyMs`,
     /// from NOW's event, the time and the log. The log may hold events
@@ -399,37 +471,57 @@ public final class Harness: @unchecked Sendable {
 
     // MARK: - The prompt
 
-    /// The whole prompt for a call about `e`, as of now.
-    public func prompt(for e: Event) -> String {
+    /// The whole prompt for a call about `e`, as of now, for the voice
+    /// `voice` (none with no voices): the harness's own words use its name.
+    public func prompt(for e: Event, voice: String? = nil) -> String {
+        prompt(for: e, voice: self.voice(id: voice))
+    }
+
+    func prompt(for e: Event, voice: Voice?) -> String {
         let now = clock.now()
         let view = log.view(now: now)
-        var parts = sections.compactMap { $0(view) }.filter { !$0.isEmpty }
+        let name = voice?.name ?? self.name
+        var parts = sections.compactMap { $0(view, voice) }.filter { !$0.isEmpty }
         switch options.reading {
-        case .standard: parts.append(Harness.reading(name))
+        case .standard: parts.append(Harness.reading(name, voices: voice != nil))
         case .custom(let text): parts.append(text)
         case .none: break
         }
-        parts.append(history(before: e, now: now, view: view))
-        parts.append(nowSection(e))
+        parts.append(history(before: e, now: now, view: view, voice: voice))
+        parts.append(nowSection(e, name: name, voice: voice, view: view))
         return parts.joined(separator: "\n\n")
     }
 
-    /// The harness's own words on how to read HISTORY and NOW.
-    static func reading(_ name: String) -> String {
-        """
-        How to read HISTORY and NOW:
-        - HISTORY is oldest first. Each line says how long ago it happened.
-          Lines indented under it add to it: its notes, then what \(name) did.
-          A line of what \(name) did ending in (in progress) hasn't finished yet.
-        - NOW is what to react to. Its last line is what \(name) already did on
-          its own, by reflex.
-        """
+    /// The harness's own words on how to read HISTORY and NOW; in a
+    /// voice's pass (`voices`), what the others did shows too, and under
+    /// NOW what they already did about it.
+    static func reading(_ name: String, voices: Bool = false) -> String {
+        guard voices else {
+            return """
+                How to read HISTORY and NOW:
+                - HISTORY is oldest first. Each line says how long ago it happened.
+                  Lines indented under it add to it: its notes, then what \(name) did.
+                  A line of what \(name) did ending in (in progress) hasn't finished yet.
+                - NOW is what to react to. Its last line is what \(name) already did on
+                  its own, by reflex.
+                """
+        }
+        return """
+            How to read HISTORY and NOW:
+            - HISTORY is oldest first. Each line says how long ago it happened.
+              Lines indented under it add to it: its notes, then what \(name) and
+              the others did. A line of what was done ending in (in progress)
+              hasn't finished yet.
+            - NOW is what to react to. Lines indented under it are its notes,
+              then what the others already did about it. Its last line is what
+              \(name) already did on its own, by reflex.
+            """
     }
 
     static let historyHeading = "HISTORY (oldest first; indented lines add to the line above)"
 
     /// HISTORY for a call about `e` at `now`.
-    func history(before e: Event, now: Int64, view: LogView) -> String {
+    func history(before e: Event, now: Int64, view: LogView, voice: Voice? = nil) -> String {
         let from = min(now - options.historyMs, reachBackTo?(e, now, view) ?? Int64.max)
         let inRange = log.events(before: e.seq, from: from).filter { lines[$0.seq] != nil }
         let picked = inRange.dropLast(options.historyLimit).filter { didLines($0.seq, view).contains { $0.open } }
@@ -441,26 +533,31 @@ public final class Harness: @unchecked Sendable {
             for note in line.notes { out.append("  " + note) }
             for d in didLines(ev.seq, view) { out.append("  " + d.text) }
         }
-        if let closing = closingLine?(e, now, view) { out.append(closing) }
+        if let closing = closingLine?(e, now, view, voice) { out.append(closing) }
         return out.joined(separator: "\n")
     }
 
     /// What was done about the event `seq`, in order, as HISTORY shows it:
     /// its `did`s and those for no event shown under it, marked in
-    /// progress while open.
-    func didLines(_ seq: Int, _ view: LogView) -> [(text: String, open: Bool)] {
+    /// progress while open. Only those that pass `keep`, if given.
+    func didLines(_ seq: Int, _ view: LogView, keep: ((Event) -> Bool)? = nil) -> [(text: String, open: Bool)] {
         let dids = (log.dids(for: seq) + (loose[seq] ?? []).compactMap(log.event)).sorted { $0.seq < $1.seq }
-        return dids.compactMap { d in
+        return dids.filter { keep?($0) ?? true }.compactMap { d in
             view.shown(d).map { $0.inProgress ? ($0.message + " (in progress)", true) : ($0.message, false) }
         }
     }
 
-    /// NOW: its heading, its line and notes, and what the rules did.
-    func nowSection(_ e: Event) -> String {
+    /// NOW: its heading, its line and notes, and what the rules did. In a
+    /// voice's pass, what the passes before it did about it is indented
+    /// after the notes, as HISTORY shows it.
+    func nowSection(_ e: Event, name: String, voice: Voice?, view: LogView) -> String {
         let line = lines[e.seq] ?? Line(e.line ?? e.kind)
-        let reflex = log.dids(for: e.seq).filter { $0["by"]?.string == "rule" && $0["ok"]?.bool == true }
-            .compactMap { $0["message"]?.string }
-        return (["NOW (\(options.heading(clock.wall())))", line.text] + line.notes.map { "  " + $0 }
+        // Its own reflexes: a rule's `did` for no voice, or for this one.
+        let reflex = log.dids(for: e.seq).filter {
+            $0["by"]?.string == "rule" && $0["ok"]?.bool == true && ($0["voice"] == nil || $0["voice"]?.string == voice?.id)
+        }.compactMap { $0["message"]?.string }
+        let others = voice == nil ? [] : didLines(e.seq, view) { $0["by"]?.string != "rule" }.map { "  " + $0.text }
+        return (["NOW (\(options.heading(clock.wall())))", line.text] + line.notes.map { "  " + $0 } + others
             + (reflex.isEmpty ? ["\(name) did nothing on its own."] : reflex)).joined(separator: "\n")
     }
 
@@ -487,26 +584,30 @@ public final class Harness: @unchecked Sendable {
 
     func wake(_ e: Event) -> Int { inputs[e.kind]?.wake ?? 0 }
 
-    /// The event the brain answers next, worked out from the log: of those
-    /// that wake it, have a line, have no `pass` yet, aren't running, are
-    /// under `maxWaitMs` old and came after the launch, the highest
-    /// `wake`, oldest first within it; one at 0 gives way to any newer one
-    /// that wakes the brain, answered or not.
-    func next() -> Event? {
+    /// The event the brain answers next, and the voice it answers for,
+    /// worked out from the log: of those that wake it, have a line, have a
+    /// voice with no `pass` yet, aren't running, are under `maxWaitMs` old
+    /// and came after the launch, the highest `wake`, oldest first within
+    /// it; one at 0 gives way to any newer one that wakes the brain,
+    /// answered or not. An event's voices answer it in turn: only its
+    /// first unanswered one can be next.
+    func next() -> (event: Event, voice: Voice?)? {
         let now = clock.now()
-        let recent = log.view(now: now).recent(within: options.maxWaitMs)
+        let view = log.view(now: now)
+        let recent = view.recent(within: options.maxWaitMs)
             .filter { $0.seq > readBackTo && !$0.fromHarness && wakes($0) }
-        let waiting = recent.filter { !log.answered($0.seq) && $0.seq != running?.seq }
         notedStale.formIntersection(recent.map(\.seq))
-        var live: [Event] = []
-        for e in waiting {
+        var live: [(event: Event, voice: Voice?)] = []
+        for e in recent {
+            guard let voice = speakers(e, view).first(where: { !log.answered(e.seq, voice: $0?.id) }),
+                  running.map({ $0.seq != e.seq || $0.voice != voice?.id }) ?? true else { continue }
             if wake(e) == 0, let newer = recent.last(where: { $0.seq > e.seq }) {
                 if notedStale.insert(e.seq).inserted { note("harness: \(e.kind) passed over for a newer \(newer.kind)") }
                 continue
             }
-            live.append(e)
+            live.append((e, voice))
         }
-        return live.max { (wake($0), -$0.seq) < (wake($1), -$1.seq) }
+        return live.max { (wake($0.event), -$0.event.seq) < (wake($1.event), -$1.event.seq) }
     }
 
     /// Starts a call for the next event, if the brain is free: one held
@@ -514,15 +615,15 @@ public final class Harness: @unchecked Sendable {
     /// is tried.
     func wake() {
         guard depth == 0, options.loop, running == nil, let brain else { return }
-        while running == nil, let e = next() {
+        while running == nil, let (e, voice) = next() {
             let view = log.view(now: clock.now())
-            if let why = holds[e.kind]?(e, view) {
-                finish(e, nil, .success([:]), latencyMs: 0, brainID: brain.id, held: why)
+            if let why = holds[e.kind]?(e, view, voice) {
+                finish(e, nil, .success([:]), latencyMs: 0, brainID: brain.id, held: why, voice: voice)
                 continue
             }
-            let job = prepare(e, brain)
+            let job = prepare(e, brain, voice: voice)
             if let why = Harness.repeated(job.questions) {
-                finish(e, nil, .failure(BrainError(why)), latencyMs: 0, brainID: brain.id)
+                finish(e, nil, .failure(BrainError(why)), latencyMs: 0, brainID: brain.id, voice: voice)
                 continue
             }
             start(e, job)
@@ -533,19 +634,21 @@ public final class Harness: @unchecked Sendable {
     struct Job: Sendable {
         var brain: any Brain
         var generation: Int
+        var voice: Voice?
         var prompt: String
         var questions: [Question]
-        /// Each output's question keys, in order.
+        /// Each asked output's question keys, in order.
         var keys: [[String]]
         var seen: Int
     }
 
-    /// The prompt and every output's questions for a call about `e`.
-    func prepare(_ e: Event, _ brain: any Brain) -> Job {
+    /// The prompt and every output's questions for a call about `e`, for
+    /// `voice`: its own outputs and those of no voice.
+    func prepare(_ e: Event, _ brain: any Brain, voice: Voice?) -> Job {
         let view = log.view(now: clock.now())
-        let asked = registered.map { $0.output.questions(now: e, log: view) }
-        return Job(brain: brain, generation: generation, prompt: prompt(for: e), questions: asked.flatMap { $0 },
-                   keys: asked.map { $0.map(\.key) }, seen: log.lastSeq)
+        let asked = self.asked(by: voice?.id).map { $0.output.questions(now: e, log: view) }
+        return Job(brain: brain, generation: generation, voice: voice, prompt: prompt(for: e, voice: voice),
+                   questions: asked.flatMap { $0 }, keys: asked.map { $0.map(\.key) }, seen: log.lastSeq)
     }
 
     /// Why a call can't ask `questions`: a key asked twice, in one output
@@ -563,7 +666,7 @@ public final class Harness: @unchecked Sendable {
     func start(_ e: Event, _ job: Job) {
         nextPass += 1
         let id = nextPass
-        running = (id, e.seq)
+        running = (id, e.seq, job.voice?.id)
         changedDuringPass = []
         let started = ContinuousClock.now
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
@@ -592,7 +695,7 @@ public final class Harness: @unchecked Sendable {
         running = nil
         deadline?.cancel()
         deadline = nil
-        finish(e, job, result, latencyMs: (ContinuousClock.now - started).ms)
+        finish(e, job, result, latencyMs: (ContinuousClock.now - started).ms, voice: job.voice)
         changedDuringPass = []
         wake()
     }
@@ -602,10 +705,11 @@ public final class Harness: @unchecked Sendable {
 
     /// Logs a pass and, unless it was dropped or held, hands each output
     /// its own answers, in order, logging what each did. A pass with no
-    /// `job` asked nothing: its event was `held` back.
+    /// `job` asked nothing: its event was `held` back. With voices, the
+    /// pass carries the voice's `id`.
     @discardableResult
     func finish(_ e: Event, _ job: Job?, _ result: Result<Answers, BrainError>, latencyMs: Int,
-                brainID: String? = nil, held: String? = nil) -> Pass {
+                brainID: String? = nil, held: String? = nil, voice: Voice?) -> Pass {
         depth += 1
         var answers: Answers = [:]
         var dropped: String?
@@ -622,15 +726,16 @@ public final class Harness: @unchecked Sendable {
         var data: [String: JSONValue] = ["for": .int(Int64(e.seq)), "brain": .string(brainID), "answers": Harness.json(answers),
                                          "dropped": .of(dropped), "ms": .int(Int64(latencyMs))]
         if let held { data["held"] = .string(held) }
+        if let voice { data["voice"] = .string(voice.id) }
         let passEvent = emit(Event(source: Event.harness, kind: Event.pass, data: data))
         if let dropped { note("harness: \(e.kind) dropped: \(dropped)") }
         if let held { note("harness: \(e.kind) held: \(held)") }
         let ran = dropped == nil && held == nil
-            ? runOutputs(answers, keys: job?.keys, now: e, by: "brain", skipping: changedDuringPass) : []
+            ? runOutputs(answers, keys: job?.keys, now: e, by: "brain", voice: voice?.id, skipping: changedDuringPass) : []
         depth -= 1
         let pass = Pass(event: e, line: lines[e.seq]?.text, seq: passEvent.seq, answers: answers, dropped: dropped, held: held, latencyMs: latencyMs, brain: brainID,
                         by: nil, prompt: job?.prompt, questions: job?.questions ?? [], seen: job?.seen ?? log.lastSeq,
-                        outputs: ran, error: job == nil ? nil : error, current: job?.generation == generation)
+                        outputs: ran, error: job == nil ? nil : error, current: job?.generation == generation, voice: voice?.id)
         onPass?(pass)
         return pass
     }
@@ -643,15 +748,16 @@ public final class Harness: @unchecked Sendable {
         })
     }
 
-    /// Hands each output its own answers, in order, and logs what each
-    /// reports. `keys` are each output's question keys as they were asked;
-    /// nil asks them again. The ones in `skipping` sit out.
-    func runOutputs(_ answers: Answers, keys: [[String]]?, now: Event?, by: String,
-                    skipping: Set<String> = []) -> [OutputRecord] {
+    /// Hands each output `voice`'s pass asks its own answers, in order,
+    /// and logs what each reports. `keys` are each output's question keys
+    /// as they were asked; nil asks them again. The ones in `skipping` sit
+    /// out.
+    func runOutputs(_ answers: Answers, keys: [[String]]?, now: Event?, by: String, voice: String?,
+                    skipping: Set<OutputKey> = []) -> [OutputRecord] {
         var ran: [OutputRecord] = []
-        for (i, slot) in registered.enumerated() {
+        for (i, slot) in asked(by: voice).enumerated() {
             let output = slot.output
-            if skipping.contains(output.name) {
+            if skipping.contains(OutputKey(voice: slot.voice, name: output.name)) {
                 note("harness: \(output.name) sat out the pass: it changed while the pass ran")
                 continue
             }
@@ -663,21 +769,31 @@ public final class Harness: @unchecked Sendable {
             let ms = (ContinuousClock.now - started).ms
             if ms > options.outputSlowMs { note("harness: \(output.name) took \(ms) ms; slow work should be handed off") }
             guard let result else { continue }
-            ran.append(record(output.name, result, for: now?.seq, by: by, latencyMs: ms))
+            ran.append(record(output.name, result, for: now?.seq, by: by, voice: slot.voice, latencyMs: ms))
         }
         return ran
     }
 
     /// Logs a result as a `did`: open while what it started plays, its
-    /// handle bound to end it.
-    func record(_ name: String, _ result: OutputResult, for about: Int?, by: String, latencyMs: Int) -> OutputRecord {
+    /// handle bound to end it. It carries its output's voice, if it has
+    /// one, so a `Choice` of no voice reads its changes from any pass.
+    func record(_ name: String, _ result: OutputResult, for about: Int?, by: String, voice: String?,
+                latencyMs: Int) -> OutputRecord {
         let started = result.ok && result.pending != nil
         let facts = result.facts.merging(["latency_ms": .int(Int64(latencyMs))]) { _, mine in mine }
-        let d = emit(Event.did(result.message, for: about, action: name, by: by, ok: result.ok, open: started, facts: facts))
+        var did = Event.did(result.message, for: about, action: name, by: by, ok: result.ok, open: started, facts: facts)
+        if let voice { did.data["voice"] = .string(voice) }
+        let d = emit(did)
         if started, let pending = result.pending {
             pending.bind { [weak self] end in self?.settle(d.seq, end) }
         }
         return OutputRecord(name: name, result: result, latencyMs: latencyMs, seq: d.seq)
+    }
+
+    /// The output registered as `name` for `voice`, or for no voice.
+    func slot(_ name: String?, voice: String?) -> Registered? {
+        registered.first { $0.output.name == name && $0.voice == voice }
+            ?? registered.first { $0.output.name == name && $0.voice == nil }
     }
 
     /// Ends an open `did`; one already ended is left alone.
@@ -714,7 +830,7 @@ public final class Harness: @unchecked Sendable {
         depth += 1
         for seq in log.openDids.sorted() {
             guard let d = log.event(seq) else { continue }
-            let output = registered.first { $0.output.name == d.action }
+            let output = slot(d.action, voice: d["voice"]?.string)
             guard now - d.at >= output?.openForMs ?? options.openForMs,
                   output?.keepOpen?(d, log.view(now: now)) != true else { continue }
             note("harness: \(d.action ?? "?") was still in progress after \(now - d.at) ms; ended it")
@@ -735,12 +851,14 @@ public final class Harness: @unchecked Sendable {
     /// A pass whose answers are given, not asked: each choice at
     /// probability 1, handed to the outputs as the brain's would be, for
     /// no event. A choice that isn't one of its question's options is left
-    /// out. Question keys asked twice drop it, and no output runs.
+    /// out. Question keys asked twice drop it, and no output runs. With a
+    /// `voice`, it's that voice's: its outputs and those of no voice run;
+    /// with none, only those of no voice.
     @discardableResult
-    public func force(_ choices: [String: String], by: String) -> [OutputRecord] {
+    public func force(_ choices: [String: String], by: String, voice: String? = nil) -> [OutputRecord] {
         dispatchPrecondition(condition: .onQueue(queue))
         let view = log.view(now: clock.now())
-        let all = registered.flatMap { $0.output.questions(now: nil, log: view) }
+        let all = self.asked(by: voice).flatMap { $0.output.questions(now: nil, log: view) }
         let dropped = Harness.repeated(all)
         let asked = dropped != nil ? [] : all.filter { q in q.options.contains { $0.name == choices[q.key] } }
         let answers = Dictionary(uniqueKeysWithValues: asked.compactMap { q in
@@ -748,46 +866,53 @@ public final class Harness: @unchecked Sendable {
         })
         if let dropped { note("harness: forced pass dropped: \(dropped)") }
         else if answers.count < choices.count { note("harness: forced answers left out: \(Set(choices.keys).subtracting(answers.keys).sorted())") }
+        var data: [String: JSONValue] = ["for": .null, "by": .string(by), "answers": Harness.json(answers),
+                                         "dropped": .of(dropped), "ms": 0]
+        if let voice { data["voice"] = .string(voice) }
         depth += 1
-        let passEvent = emit(Event(source: Event.harness, kind: Event.pass,
-                                   data: ["for": .null, "by": .string(by), "answers": Harness.json(answers), "dropped": .of(dropped),
-                                          "ms": 0]))
-        let ran = dropped != nil ? [] : runOutputs(answers, keys: nil, now: nil, by: by)
+        let passEvent = emit(Event(source: Event.harness, kind: Event.pass, data: data))
+        let ran = dropped != nil ? [] : runOutputs(answers, keys: nil, now: nil, by: by, voice: voice)
         depth -= 1
-        for a in ran where a.result.ok { changedOutside(a.name) }
+        for slot in self.asked(by: voice) where ran.contains(where: { $0.name == slot.output.name && $0.result.ok }) {
+            changedOutside(OutputKey(voice: slot.voice, name: slot.output.name))
+        }
         onPass?(Pass(event: nil, line: nil, seq: passEvent.seq, answers: answers, dropped: dropped, held: nil, latencyMs: 0, brain: nil, by: by, prompt: nil,
-                     questions: asked, seen: log.lastSeq, outputs: ran, error: nil, current: true))
+                     questions: asked, seen: log.lastSeq, outputs: ran, error: nil, current: true, voice: voice))
         wake()
         return ran
     }
 
     /// One output acting outside any pass, such as a value set from a
-    /// dashboard: its result is logged for no event.
+    /// dashboard: its result is logged for no event, with the voice it's
+    /// registered for.
     @discardableResult
     public func force(_ output: any Output, by: String, _ body: () -> OutputResult?) -> OutputResult? {
         dispatchPrecondition(condition: .onQueue(queue))
         let started = ContinuousClock.now
         guard let result = body() else { return nil }
-        _ = record(output.name, result, for: nil, by: by, latencyMs: (ContinuousClock.now - started).ms)
-        if result.ok { changedOutside(output.name) }
+        let voice = output.voice
+        _ = record(output.name, result, for: nil, by: by, voice: voice, latencyMs: (ContinuousClock.now - started).ms)
+        if result.ok { changedOutside(OutputKey(voice: voice, name: output.name)) }
         return result
     }
 
-    func changedOutside(_ name: String) {
-        if running != nil { changedDuringPass.insert(name) }
+    func changedOutside(_ key: OutputKey) {
+        if running != nil { changedDuringPass.insert(key) }
     }
 
     // MARK: - One event, straight through
 
     /// One event's call without the loop, for evals: nil when it doesn't
     /// wake the brain, there's no brain, or it's held back. Don't call on
-    /// the queue. Past the deadline the request is cancelled.
-    public func respond(to e: Event) async -> Pass? {
+    /// the queue. Past the deadline the request is cancelled. With a
+    /// `voice`, it's that voice's pass.
+    public func respond(to e: Event, voice id: String? = nil) async -> Pass? {
         let prepared: (job: Job?, dropped: Pass?) = queue.sync {
-            guard wakes(e), let brain, holds[e.kind]?(e, log.view(now: clock.now())) == nil else { return (nil, nil) }
-            let job = prepare(e, brain)
+            let voice = self.voice(id: id)
+            guard wakes(e), let brain, holds[e.kind]?(e, log.view(now: clock.now()), voice) == nil else { return (nil, nil) }
+            let job = prepare(e, brain, voice: voice)
             guard let why = Harness.repeated(job.questions) else { return (job, nil) }
-            return (nil, finish(e, nil, .failure(BrainError(why)), latencyMs: 0, brainID: brain.id))
+            return (nil, finish(e, nil, .failure(BrainError(why)), latencyMs: 0, brainID: brain.id, voice: voice))
         }
         guard let job = prepared.job else { return prepared.dropped }
         let started = ContinuousClock.now
@@ -807,7 +932,7 @@ public final class Harness: @unchecked Sendable {
             return Task.isCancelled ? .failure(BrainError("cancelled")) : first
         }
         let ms = (ContinuousClock.now - started).ms
-        return queue.sync { finish(e, job, result, latencyMs: ms) }
+        return queue.sync { finish(e, job, result, latencyMs: ms, voice: job.voice) }
     }
 
     /// The brain's answers, or why there are none.

@@ -74,6 +74,8 @@ It comes down to three steps, and you supply the pieces for each.
   and does what the answers say.
 - A **`Choice`** is the one ready-made output: a named value the brain can
   change, like a mood.
+- **Voices** let one log speak for several characters. Each answers an
+  event in turn, with its own outputs, and sees what the others did.
 
 Whatever a rule or an output does goes back into the log, so the next
 prompt shows it.

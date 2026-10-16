@@ -54,10 +54,15 @@ public final class Log: @unchecked Sendable {
     /// Each kind's events, by `seq`, oldest first.
     var byKind: [String: [Int]] = [:]
     /// The harness's own events by what they're `for`: `did`s by their
-    /// event, `ended` by its `did`, and which events have a `pass`.
+    /// event, `ended` by its `did`, and which events have a `pass`, for
+    /// which voice (nil with none).
     var didsFor: [Int: [Int]] = [:]
     var endedFor: [Int: Int] = [:]
-    var passFor: [Int: Int] = [:]
+    var passFor: [PassKey: Int] = [:]
+    struct PassKey: Hashable {
+        var seq: Int
+        var voice: String?
+    }
     /// The `did`s by their output or rule (`action`), by `seq`, oldest first.
     var didsBy: [String: [Int]] = [:]
     /// The `did`s still open: `open`, with no `ended` yet.
@@ -120,7 +125,8 @@ public final class Log: @unchecked Sendable {
             if endedFor[about] == nil { endedFor[about] = e.seq }
             openDids.remove(about)
         case Event.pass:
-            if passFor[about] == nil { passFor[about] = e.seq }
+            let key = PassKey(seq: about, voice: e["voice"]?.string)
+            if passFor[key] == nil { passFor[key] = e.seq }
         default:
             break
         }
@@ -161,7 +167,7 @@ public final class Log: @unchecked Sendable {
         }
         didsFor = didsFor.filter { $0.key > gone }
         endedFor = endedFor.filter { $0.key > gone }
-        passFor = passFor.filter { $0.key > gone }
+        passFor = passFor.filter { $0.key.seq > gone }
     }
 
     /// The days that have a file, oldest first.
@@ -294,8 +300,11 @@ public final class Log: @unchecked Sendable {
     /// How the `did` `seq` ended, or nil while it hasn't.
     public func ended(_ did: Int) -> Event? { did > goneTo ? endedFor[did].flatMap(event) : nil }
 
-    /// Whether the event `seq` has a `pass`.
-    public func answered(_ seq: Int) -> Bool { seq > goneTo && passFor[seq] != nil }
+    /// Whether the event `seq` has a `pass` for `voice`; with no voices,
+    /// for none.
+    public func answered(_ seq: Int, voice: String? = nil) -> Bool {
+        seq > goneTo && passFor[PassKey(seq: seq, voice: voice)] != nil
+    }
 
     /// Where `seqs`, in order, start being in memory and stop being before
     /// `upTo`.
@@ -419,6 +428,8 @@ public struct LogView {
         return end["outcome"]?.string == "done" ? (message, false) : nil
     }
 
-    /// Whether the event `seq` has a `pass` in view.
-    public func answered(_ seq: Int) -> Bool { seq > log.goneTo && (log.passFor[seq].map { $0 < upTo } ?? false) }
+    /// Whether the event `seq` has a `pass` for `voice` in view.
+    public func answered(_ seq: Int, voice: String? = nil) -> Bool {
+        seq > log.goneTo && (log.passFor[Log.PassKey(seq: seq, voice: voice)].map { $0 < upTo } ?? false)
+    }
 }

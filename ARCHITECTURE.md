@@ -1,6 +1,6 @@
 # How MellowHarness works
 
-Updated 2026-10-15. [README.md](README.md) is the short version. This is
+Updated 2026-10-16. [README.md](README.md) is the short version. This is
 the tour: how an event becomes a line, the lines a prompt, and the
 brain's answers something your app does. The code and its tests have
 every rule.
@@ -78,7 +78,7 @@ has a `for`, the `seq` of the event it answers:
 | --- | --- |
 | `did` | A rule or an output did something. Its `message` is the sentence HISTORY shows |
 | `ended` | Something that took a while (an animation, a sound) finished, or never will |
-| `pass` | Every call to the brain, with its answers. Held and dropped calls too, with why |
+| `pass` | Every call to the brain, with its answers. Held and dropped calls too, with why. With [voices](#voices-several-characters-one-log), the voice it answered for |
 
 Here's the brain's answer to the event above:
 
@@ -329,6 +329,71 @@ let tone = Choice(name: "tone", start: "calm", question: "After NOW, how does Li
   options, worded as staying. If the brain picks it, nothing is logged.
 - **A change** is a `did` with `from` and `to`, so it survives a
   relaunch for free.
+
+### Voices: several characters, one log
+
+One harness can answer for several characters at once, such as a lamp
+and a fan on the same desk. Each is a **voice**. With no voices,
+nothing below applies, and the prompts and the log are as above.
+
+```swift
+h.voice(Harness.Voice(id: "light", name: "Light"))
+h.voice(Harness.Voice(id: "fan", name: "Fan"))
+h.section { _, voice in "YOU ARE \(voice?.name.uppercased() ?? "NOBODY")" }
+h.output(lightMood)   // Choice(name: "mood", start: "calm", voice: "light", ...)
+h.output(fanMood)     // the same name and key, Fan's own
+h.output(blink)       // no voice: asked in every pass
+```
+
+- **Each voice answers in a pass of its own.** An event that wakes the
+  brain gets one pass per voice, one call at a time, in the order
+  `h.speakers { e, log in [ids] }` gives. By default that's every
+  voice, in the order registered. An empty list leaves the event
+  unanswered.
+- **Strictly in turn.** Only an event's first voice still to answer can
+  go next. Otherwise the loop picks as before: the highest `wake`,
+  oldest first. A `wake` `0` event with a newer one behind it is passed
+  over for all its remaining voices.
+- **Each pass asks only its voice's outputs**, and those of no voice.
+  An output says its own: `Output`'s `voice`, nil by default, and
+  `Choice(voice:)`. So two voices can have outputs of the same name and
+  the same question keys.
+- **The prompt is the voice's.** Sections, `closing` and holds can take
+  the voice as a last parameter. The harness's own words use the voice's
+  `name`. Under NOW, after its notes, are what the passes before it did
+  about that event, and its reflexes are only the rules' `did`s with no
+  `voice` or with its own.
+- **The log says whose.** A `pass` has `voice`, and an event is answered
+  for a voice once it has that voice's `pass`
+  (`log.answered(seq, voice:)`). A `did` has its output's `voice`, and
+  none for an output of no voice. A `Choice` with a `voice` reads only
+  that voice's changes, and one with none reads only changes with no
+  voice.
+- **The one-off calls take a voice too**: `h.prompt(for:voice:)`,
+  `h.respond(to:voice:)` and `h.force(_:by:voice:)`.
+
+Here's Fan's prompt, after Light's pass, from `VoicesTests`:
+
+```text
+YOU ARE FAN
+
+How to read HISTORY and NOW:
+- HISTORY is oldest first. Each line says how long ago it happened.
+  Lines indented under it add to it: its notes, then what Fan and
+  the others did. A line of what was done ending in (in progress)
+  hasn't finished yet.
+- NOW is what to react to. Lines indented under it are its notes,
+  then what the others already did about it. Its last line is what
+  Fan already did on its own, by reflex.
+
+HISTORY (oldest first; indented lines add to the line above)
+
+NOW (14:09, Wednesday)
+You pressed the button.
+  Light felt glad.
+  The lamp blinked.
+Fan did nothing on its own.
+```
 
 ## Putting it together: a lamp that worries
 
