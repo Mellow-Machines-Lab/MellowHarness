@@ -39,7 +39,7 @@ public struct Steering: Equatable, Sendable {
     public subscript(_ path: String) -> String { files[path] ?? "" }
 
     /// Splits a leading `---` block from the rest.
-    public static func frontMatter(_ text: String) -> (String, String) {
+    static func frontMatter(_ text: String) -> (String, String) {
         guard text.hasPrefix("---\n"),
               let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 4)..<text.endIndex)
         else { return ("", text) }
@@ -47,7 +47,7 @@ public struct Steering: Equatable, Sendable {
     }
 
     /// The text without `<!-- … -->` comments, trimmed.
-    public static func clean(_ text: String) -> String {
+    static func clean(_ text: String) -> String {
         var s = text
         while let start = s.range(of: "<!--"), let end = s.range(of: "-->", range: start.upperBound..<s.endIndex) {
             s.removeSubrange(start.lowerBound..<end.upperBound)

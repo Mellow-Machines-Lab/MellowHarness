@@ -1,6 +1,6 @@
 # How MellowHarness works
 
-Updated 2026-10-11. [README.md](README.md) is the short version. This is
+Updated 2026-10-15. [README.md](README.md) is the short version. This is
 the tour: how an event becomes a line, the lines a prompt, and the
 brain's answers something your app does. The code and its tests have
 every rule.
@@ -273,10 +273,10 @@ An output asks the brain its own multiple-choice questions, and does
 what the answers say:
 
 ```swift
-protocol Action: AnyObject {
+protocol Output: AnyObject {
     var name: String { get }
     func questions(now: Event?, log: LogView) -> [Question]
-    func run(_ answers: Answers, now: Event?, log: LogView) -> ActionResult?
+    func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult?
 }
 ```
 

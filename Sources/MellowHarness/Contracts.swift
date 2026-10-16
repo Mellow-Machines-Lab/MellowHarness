@@ -150,7 +150,7 @@ public typealias Answers = [String: Answer]
 /// What an output did: its `message` is the whole line HISTORY shows when
 /// `ok`, the reason when not. A started one finishes later: HISTORY shows
 /// it in progress until its `pending` ends.
-public struct ActionResult: Equatable, Sendable {
+public struct OutputResult: Equatable, Sendable {
     public let ok: Bool
     public let message: String
     /// How a started output tells the harness it ended; nil for one that
@@ -168,17 +168,17 @@ public struct ActionResult: Equatable, Sendable {
         self.facts = facts
     }
 
-    public static func done(_ message: String, facts: [String: JSONValue] = [:]) -> ActionResult {
-        ActionResult(ok: true, message: message, facts: facts)
+    public static func done(_ message: String, facts: [String: JSONValue] = [:]) -> OutputResult {
+        OutputResult(ok: true, message: message, facts: facts)
     }
-    public static func failed(_ why: String) -> ActionResult { ActionResult(ok: false, message: why) }
+    public static func failed(_ why: String) -> OutputResult { OutputResult(ok: false, message: why) }
     /// Started, and ends when `pending` is finished.
-    public static func started(_ message: String, _ pending: Pending, facts: [String: JSONValue] = [:]) -> ActionResult {
-        ActionResult(ok: true, message: message, pending: pending, facts: facts)
+    public static func started(_ message: String, _ pending: Pending, facts: [String: JSONValue] = [:]) -> OutputResult {
+        OutputResult(ok: true, message: message, pending: pending, facts: facts)
     }
 
     /// The same handle, not just an equal one.
-    public static func == (a: ActionResult, b: ActionResult) -> Bool {
+    public static func == (a: OutputResult, b: OutputResult) -> Bool {
         a.ok == b.ok && a.message == b.message && a.pending === b.pending && a.facts == b.facts
     }
 }
@@ -222,7 +222,7 @@ public final class Pending: @unchecked Sendable {
 /// brain wakes. It builds its questions for every call, reads the brain's
 /// answers to them, and reports what it did, or what it started. Its body
 /// can call anything; the harness asks, logs and places the result.
-public protocol Action: AnyObject {
+public protocol Output: AnyObject {
     var name: String { get }
     /// Built for every call, all asked in one request, from the event the
     /// brain is answering (nil for a forced pass) and the log, so options
@@ -231,5 +231,5 @@ public protocol Action: AnyObject {
     /// The brain's answers to this output's own questions, for `now` (nil
     /// for a forced pass). Nil means "did nothing". Called on the harness's
     /// queue; slow work is handed off.
-    func run(_ answers: Answers, now: Event?, log: LogView) -> ActionResult?
+    func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult?
 }

@@ -12,7 +12,7 @@ public struct JevBrain: Brain {
     /// Sends a request and returns the body and HTTP status. Tests pass their own.
     let send: @Sendable (URLRequest) async throws -> (Data, Int)
 
-    public static let endpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
+    static let endpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
 
     /// A busy or failing server, or a dropped connection, is tried once more
     /// after this, as TypeSafe advises for 429 and 529, unless the pass's
