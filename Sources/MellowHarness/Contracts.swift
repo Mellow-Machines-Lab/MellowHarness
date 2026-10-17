@@ -224,6 +224,8 @@ public final class Pending: @unchecked Sendable {
 /// can call anything; the harness asks, logs and places the result.
 public protocol Output: AnyObject {
     var name: String { get }
+    /// The voice whose passes alone ask it and run it; nil for every pass.
+    var voice: String? { get }
     /// Built for every call, all asked in one request, from the event the
     /// brain is answering (nil for a forced pass) and the log, so options
     /// can follow anything. Keys never change; options may.
@@ -232,4 +234,10 @@ public protocol Output: AnyObject {
     /// for a forced pass). Nil means "did nothing". Called on the harness's
     /// queue; slow work is handed off.
     func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult?
+}
+
+extension Output {
+    /// The voice whose passes alone ask it and run it; nil, the default,
+    /// for every pass.
+    public var voice: String? { nil }
 }

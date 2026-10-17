@@ -4,10 +4,13 @@ import Foundation
 /// can change, such as a tone or a mood. It stores nothing: its value is
 /// the `to` of its latest `did` in the log, or `start`. Its options come
 /// from your function, for every call; staying put is the brain picking
-/// the value it has, which changes nothing and logs nothing.
+/// the value it has, which changes nothing and logs nothing. With a
+/// `voice`, it's that voice's own: only its changes count, and two voices
+/// may each have one of the same name.
 public final class Choice: Output {
     public let name: String
     public let start: String
+    public let voice: String?
     let question: String
     let about: String
     let judgeBy: String
@@ -17,12 +20,13 @@ public final class Choice: Output {
     /// `said` is the whole line a change shows in HISTORY, from the value
     /// it had and the new one; `options` what the brain is offered, from
     /// the value it has, the event it's answering (nil for a forced pass)
-    /// and the log.
-    public init(name: String, start: String, question: String, about: String = "the NOW and HISTORY sections",
-                judgeBy: String, said: ((String, String) -> String)? = nil,
+    /// and the log. Register it for the same `voice`.
+    public init(name: String, start: String, voice: String? = nil, question: String,
+                about: String = "the NOW and HISTORY sections", judgeBy: String, said: ((String, String) -> String)? = nil,
                 options: @escaping (String, Event?, LogView) -> [Option]) {
         self.name = name
         self.start = start
+        self.voice = voice
         self.question = question
         self.about = about
         self.judgeBy = judgeBy
@@ -30,9 +34,10 @@ public final class Choice: Output {
         self.options = options
     }
 
-    /// Its latest change in the log, if any.
+    /// Its latest change in the log, if any: one with its voice, or with
+    /// none for one of no voice.
     public func latest(_ log: LogView) -> Event? {
-        log.lastDid(name) { $0["ok"]?.bool == true && $0["to"]?.string != nil }
+        log.lastDid(name) { $0["ok"]?.bool == true && $0["to"]?.string != nil && $0["voice"]?.string == self.voice }
     }
 
     /// The value it has.
@@ -69,8 +74,9 @@ public final class Choice: Output {
     public func restore(_ to: String, by: String, in harness: Harness) -> Event? {
         let from = value(harness.log.view(now: harness.clock.now()))
         guard to != from else { return nil }
-        return harness.emit(Event(source: Event.harness, kind: Event.did,
-                                  data: ["for": .null, "by": .string(by), "action": .string(name), "ok": true,
-                                         "from": .string(from), "to": .string(to)]))
+        var data: [String: JSONValue] = ["for": .null, "by": .string(by), "action": .string(name), "ok": true,
+                                         "from": .string(from), "to": .string(to)]
+        if let voice { data["voice"] = .string(voice) }
+        return harness.emit(Event(source: Event.harness, kind: Event.did, data: data))
     }
 }

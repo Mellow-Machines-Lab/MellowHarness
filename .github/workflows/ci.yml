@@ -21,8 +21,10 @@ jobs:
       - run: swift --version
       - name: swift test
         run: |
+          # One test at a time: the loop's tests wait on the brain's real
+          # deadline, which a busy runner's parallel tests can starve.
           for try in 1 2; do
-            if swift test 2>&1 | tee test.log; [ "${PIPESTATUS[0]}" -eq 0 ]; then exit 0; fi
+            if swift test --no-parallel 2>&1 | tee test.log; [ "${PIPESTATUS[0]}" -eq 0 ]; then exit 0; fi
             sed 's/\x1b\[[0-9;]*m//g' test.log | grep -E "error:|✘|failed" | sort -u | head -20 |
               while IFS= read -r line; do echo "::warning title=swift test, try $try::$line"; done
           done
