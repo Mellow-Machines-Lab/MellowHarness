@@ -676,6 +676,22 @@ import Testing
 
     // MARK: The brain
 
+    /// A reading brain reads the event it answers and the log as the call
+    /// is prepared, and the brain it returns answers that call.
+    @Test func testAReadingBrainReadsTheEventItAnswers() async {
+        var options = Harness.Options()
+        options.loop = false
+        let rig = Rig(brain: KindBrain(), options: options)
+        let toy = ToyOutput("toy", keys: ["a"], result: .done("ok"))
+        rig.sync { rig.h.output(toy) }
+        rig.h.input("go", wake: 0) { _, _ in "Go." }
+        rig.h.input("stop", wake: 0) { _, _ in "Stop." }
+        _ = await rig.h.respond(to: rig.emit("go"))
+        _ = await rig.h.respond(to: rig.emit("stop"))
+        #expect(rig.sync { toy.got.map { $0["a"]?.choice } } == ["x", "y"], "the first option for go, the second for stop")
+    }
+
+
     /// `ScriptedBrain(always:)` reports a pick given with no
     /// probabilities at 1, as a brain with none does; probabilities given
     /// are kept, and a question it has no answer for gets its first option
@@ -745,6 +761,18 @@ final class ToyOutput: Output, @unchecked Sendable {
     func run(_ answers: Answers, now: Event?, log: LogView) -> OutputResult? {
         got.append(answers)
         return result
+    }
+}
+
+/// A reading brain: the first option for a `go`, the second for anything else.
+struct KindBrain: ReadingBrain {
+    let id = "kind"
+    var kind = ""
+    func reading(now: Event, log: LogView) -> any Brain { KindBrain(kind: now.kind) }
+    func answer(state: String, questions: [Question], deadline: Duration) async throws -> Answers {
+        var out: Answers = [:]
+        for q in questions { out[q.key] = Answer(choice: q.options[kind == "go" ? 0 : 1].name, probabilities: [:]) }
+        return out
     }
 }
 

@@ -248,6 +248,13 @@ Give it to the harness like any other: `Harness(name: "Light", brain:
 FirstOption(), ...)`, or `h.use(FirstOption())` to swap brains while it
 runs.
 
+A brain made of rules needs facts, not the prompt's prose. Make it a
+`ReadingBrain`: its `reading(now:log:)` runs on the harness's queue as each
+call is prepared, with the event the call answers and the log, as an
+output's `questions` does. It returns the brain that answers that one call,
+with what it read kept in it. Nothing else changes: the prompt is still
+built and passed, and the outputs still decide what an answer means.
+
 **The loop asks one call at a time.** Whenever the brain is free, it
 picks the next event from the log:
 
