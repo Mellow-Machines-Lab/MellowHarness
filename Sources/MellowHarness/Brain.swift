@@ -22,6 +22,14 @@ public protocol Brain: Sendable {
     func answer(state: String, questions: [Question], deadline: Duration) async throws -> Answers
 }
 
+/// A brain that reads the event and the log before its call, as an output
+/// does: one made of rules, which needs facts, not prose. `reading` runs on
+/// the harness's queue as each call is prepared, and returns the brain
+/// that answers that call alone, with what it read kept in it.
+public protocol ReadingBrain: Brain {
+    func reading(now: Event, log: LogView) -> any Brain
+}
+
 public struct BrainError: Error, Equatable, CustomStringConvertible {
     public var description: String
     /// What came back, when it couldn't be used: the harness notes its size.

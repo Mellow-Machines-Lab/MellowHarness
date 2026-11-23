@@ -171,7 +171,8 @@ and anything else can plug in.
 - **`ScriptedBrain`** needs no key and no network. It answers from a
   script, and the quick start below uses it.
 - **Your own**: any type that implements `Brain`, a single method, can be
-  the brain, such as a local model or another provider.
+  the brain, such as a local model or another provider. A brain of
+  rules can read the event and the log first (`ReadingBrain`).
   [ARCHITECTURE.md](ARCHITECTURE.md#your-own-brain) has the contract.
 
 ## Get started

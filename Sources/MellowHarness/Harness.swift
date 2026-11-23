@@ -647,6 +647,7 @@ public final class Harness: @unchecked Sendable {
     func prepare(_ e: Event, _ brain: any Brain, voice: Voice?) -> Job {
         let view = log.view(now: clock.now())
         let asked = self.asked(by: voice?.id).map { $0.output.questions(now: e, log: view) }
+        let brain = (brain as? any ReadingBrain)?.reading(now: e, log: view) ?? brain
         return Job(brain: brain, generation: generation, voice: voice, prompt: prompt(for: e, voice: voice),
                    questions: asked.flatMap { $0 }, keys: asked.map { $0.map(\.key) }, seen: log.lastSeq)
     }
